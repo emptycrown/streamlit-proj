@@ -97,9 +97,9 @@ tools = [
         return_direct=True,
     ),
     Tool(
-        name="Snowflake SQL Chain",
+        name="Snowflake",
         func=lambda q: db_chain.run(q),
-        description=f"useful when you want to answer questions by looking up data in the Snowflake transaction database using SQL. The input to this tool should be a complete english sentence.",
+        description=f"useful when you want to answer questions about customer transactions in Snowflake. The input to this tool should be a complete english sentence.",
         return_direct=True,
     ),
 ]
