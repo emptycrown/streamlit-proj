@@ -5,49 +5,109 @@ from langchain.chains import ConversationChain
 from langchain.chains.conversation.memory import ConversationBufferMemory
 from langchain.llms import OpenAI
 from langchain.agents import initialize_agent, Tool
+from langchain import SQLDatabase, SQLDatabaseChain
 
 from gpt_index import GPTSimpleVectorIndex, WikipediaReader
 from gpt_index.langchain_helpers.memory_wrapper import GPTIndexMemory
+import snowflake.connector
+from sqlalchemy import create_engine
+
 
 # From here down is all the StreamLit UI.
-st.set_page_config(page_title="Wikipedia + Langchain Demo", page_icon=":bird:")
-st.header("Wikipedia + Langchain Demo")
+st.set_page_config(
+    page_title="Snowflake + Wikipedia + Langchain Demo", page_icon=":bird:"
+)
+st.header("Snowflake + Wikipedia + Langchain Demo")
 
 st.sidebar.title("Data Sources")
-wiki_input = st.sidebar.text_input(
-    "Comma-separated Wiki pages: ", placeholder="e.g. Tokyo, Berlin, Rome", key="wiki"
-)
+
+llm = OpenAI(temperature=0)
+
+# Initialize connection.
+# Uses st.experimental_singleton to only run once.
+# @st.experimental_singleton
+# def init_connection():
+#     return snowflake.connector.connect(
+#         **st.secrets["snowflake"], client_session_keep_alive=True
+#     )
 
 
-@st.cache(allow_output_mutation=True)
+# conn = init_connection()
+
+# @st.experimental_memo(ttl=600)
+# def run_query(query):
+#     with conn.cursor() as cur:
+#         cur.execute(query)
+#         return cur.fetchall()
+
+
+# rows = run_query("SELECT * from mytable;")
+# # Print results.
+# for row in rows:
+#     st.sidebar.write(f"{row[0]} has a :{row[1]}:")
+
+
+@st.experimental_singleton
+def build_snowflake_chain():
+    engine = create_engine(
+        "snowflake://{user}:{password}@{account}/{database}/{schema}?warehouse={warehouse}".format(
+            **st.secrets["snowflake"]
+        )
+    )
+
+    sql_database = SQLDatabase(engine)
+
+    st.sidebar.header("❄️ Snowflake database has been connected")
+    st.sidebar.write(f"{sql_database.table_info}")
+
+    db_chain = SQLDatabaseChain(llm=llm, database=sql_database, verbose=True)
+    return db_chain
+
+
+@st.experimental_singleton
 def build_index(input):
     pages = [p.strip() for p in input.split(",") if p != ""]
     wiki_docs = WikipediaReader().load_data(pages=pages) if input else []
     return GPTSimpleVectorIndex(wiki_docs), pages
 
 
+# Snowflake tool
+db_chain = build_snowflake_chain()
+
+st.sidebar.write("")
+
+# Wiki tool
+st.sidebar.header("📚 You can also add Wikipedia pages")
+wiki_input = st.sidebar.text_input(
+    "Comma-separated Wiki pages: ", placeholder="e.g. Tokyo, Berlin, Rome", key="wiki"
+)
+
 index, wiki_pages = build_index(wiki_input)
 
 if len(wiki_pages) > 0:
     st.sidebar.write(f"{len(wiki_pages)} articles have been parsed and indexed")
 
+
 tools = [
     Tool(
-        name="GPT Index",
-        func=lambda q: str(index.query(q).response),
+        name="Wiki GPT Index",
+        func=lambda q: str(index.query(q)),
         description=f"useful when you want to answer questions from the topics {wiki_input}. The input to this tool should be a complete english sentence.",
+        return_direct=True,
+    ),
+    Tool(
+        name="Snowflake SQL Chain",
+        func=lambda q: db_chain.run(q),
+        description=f"useful when you want to answer questions by looking up data in the Snowflake transaction database using SQL. The input to this tool should be a complete english sentence.",
         return_direct=True,
     ),
 ]
 
-# st.sidebar.text_input(
-#     "Snowflake", placeholder="This is not working yet", key="snowflake"
-# )
 
 # Initialize LangChain agent and chain
 
 memory = ConversationBufferMemory(memory_key="chat_history")
-llm = OpenAI(temperature=0)
+
 agent_chain = initialize_agent(
     tools, llm, agent="conversational-react-description", verbose=True, memory=memory
 )
