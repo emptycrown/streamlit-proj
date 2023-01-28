@@ -9,7 +9,8 @@ from langchain import SQLDatabase, SQLDatabaseChain
 
 from gpt_index import GPTSimpleVectorIndex, WikipediaReader
 from gpt_index.langchain_helpers.memory_wrapper import GPTIndexMemory
-import snowflake.connector
+
+# import snowflake.connector
 from sqlalchemy import create_engine
 
 
