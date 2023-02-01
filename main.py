@@ -1,16 +1,12 @@
 """Python file to serve as the frontend"""
 import streamlit as st
 from streamlit_chat import message
-from langchain.chains import ConversationChain
 from langchain.chains.conversation.memory import ConversationBufferMemory
+from langchain.chains.llm_math.base import LLMMathChain
 from langchain.llms import OpenAI
-from langchain.agents import initialize_agent, Tool
+from langchain.agents import initialize_agent, Tool, load_tools
 from langchain import SQLDatabase, SQLDatabaseChain
-
 from gpt_index import GPTSimpleVectorIndex, WikipediaReader
-from gpt_index.langchain_helpers.memory_wrapper import GPTIndexMemory
-
-# import snowflake.connector
 from sqlalchemy import create_engine
 
 
@@ -18,36 +14,28 @@ from sqlalchemy import create_engine
 st.set_page_config(
     page_title="Snowflake + Wikipedia + Langchain Demo", page_icon=":bird:"
 )
-st.header("Snowflake + Wikipedia + Langchain Demo")
+st.header("Snowflake + Wikipedia + LLM Demo")
+st.write(
+    "👋 This is a demo of connecting large language models to external data sources to give it specialized knowledge (e.g. company transaction data) and reduce hallucinations."
+)
+st.write(
+    "🤖 The chatbot is built with LangChain (agents) and GPT Index (connect to data sources)."
+)
+
+st.write("Examples you can try:")
+st.write("- What was the average size of transactions in January?")
+st.write("- How much did Bill Gates spend on transactions and where did he grow up?")
+st.write("- What was the largest transaction? Who made that transaction?")
+st.write(
+    "- Who were the celebrities that purchased, and how much did they spend in total?"
+)
+st.write("- Did Bill Gates or Elon Musk spend more relative to their net worth?")
 
 st.sidebar.title("Data Sources")
 
 llm = OpenAI(temperature=0)
 
-# Initialize connection.
-# Uses st.experimental_singleton to only run once.
-# @st.experimental_singleton
-# def init_connection():
-#     return snowflake.connector.connect(
-#         **st.secrets["snowflake"], client_session_keep_alive=True
-#     )
-
-
-# conn = init_connection()
-
-# @st.experimental_memo(ttl=600)
-# def run_query(query):
-#     with conn.cursor() as cur:
-#         cur.execute(query)
-#         return cur.fetchall()
-
-
-# rows = run_query("SELECT * from mytable;")
-# # Print results.
-# for row in rows:
-#     st.sidebar.write(f"{row[0]} has a :{row[1]}:")
-
-
+# Connect to Snowflake and build the chain
 @st.experimental_singleton
 def build_snowflake_chain():
     engine = create_engine(
@@ -61,10 +49,11 @@ def build_snowflake_chain():
     st.sidebar.header("❄️ Snowflake database has been connected")
     st.sidebar.write(f"{sql_database.table_info}")
 
-    db_chain = SQLDatabaseChain(llm=llm, database=sql_database, verbose=True)
+    db_chain = SQLDatabaseChain(llm=llm, database=sql_database)
     return db_chain
 
 
+# Parse and Index the Wiki Pages
 @st.experimental_singleton
 def build_index(input):
     pages = [p.strip() for p in input.split(",") if p != ""]
@@ -88,19 +77,21 @@ index, wiki_pages = build_index(wiki_input)
 if len(wiki_pages) > 0:
     st.sidebar.write(f"{len(wiki_pages)} articles have been parsed and indexed")
 
-
 tools = [
     Tool(
-        name="Wiki GPT Index",
-        func=lambda q: str(index.query(q)),
-        description=f"useful when you want to answer questions from the topics {wiki_input}. The input to this tool should be a complete english sentence.",
-        return_direct=True,
+        name="Snowflake Transactions",
+        func=lambda q: db_chain.run(q),
+        description=f"Useful when you want to answer questions about people's spending, purchases, and transactions. The input to this tool should be a complete english sentence. The celebrities are: Ruth Porat, Bill Gates, Warren Buffet, Elon Musk, Susan Wojcicki.",
     ),
     Tool(
-        name="Snowflake",
-        func=lambda q: db_chain.run(q),
-        description=f"useful when you want to answer questions about customer transactions in Snowflake. The input to this tool should be a complete english sentence.",
-        return_direct=True,
+        name="Wiki GPT Index",
+        func=lambda q: str(index.query(q, similarity_top_k=1)),
+        description=f"Useful when you want to answer general knowledge and trivia questions about notable figures and net worth. If this tool is used, only explicitly pass in what original query is. The input to this tool should be a complete english sentence.",
+    ),
+    Tool(
+        "Calculator",
+        LLMMathChain(llm=llm).run,
+        "Useful for when you need to make any math calculations. Use this tool for any and all numerical calculations. The input to this tool should be a mathematical expression.",
     ),
 ]
 
@@ -110,7 +101,7 @@ tools = [
 memory = ConversationBufferMemory(memory_key="chat_history")
 
 agent_chain = initialize_agent(
-    tools, llm, agent="conversational-react-description", verbose=True, memory=memory
+    tools, llm, agent="zero-shot-react-description", verbose=True, memory=memory
 )
 
 
@@ -149,7 +140,7 @@ if st.session_state["generated"]:
         message(st.session_state["generated"][i], key=str(i))
 
 
-st.button("Refresh chat", on_click=refresh_chain)
+st.button("Clear chat", on_click=refresh_chain)
 
 # if chain.memory.store:
 #     for entity, summary in chain.memory.store.items():
